@@ -1,5 +1,7 @@
 # Projekt
 
+*Czujniki środowiskowe
+
 ## Technikalia
 
 * Raspberry Pi 3B
