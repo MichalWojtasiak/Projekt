@@ -1,6 +1,6 @@
 # Projekt
 
-*Czujniki środowiskowe
+* Czujniki środowiskowe
 
 ## Technikalia
 
