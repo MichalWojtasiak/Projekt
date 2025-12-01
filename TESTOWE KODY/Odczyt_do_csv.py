@@ -188,3 +188,20 @@ try:
 
 except KeyboardInterrupt:
     print("\nZakończono pomiary.")
+
+
+#ZAPIS CSV
+# timestamp – znacznik czasu
+# BME_temp – temperatura z BME680 (°C)
+# BME_pres – ciśnienie (hPa)
+# BME_hum – wilgotność (%)
+# BME_gas – oporność sensora gazu (Ohm)
+# BME_iaq – wyliczony pseudo-IAQ
+# SCD41_CO2 – CO₂ w ppm
+# SCD41_temp – temperatura z SCD41 (°C)
+# SCD41_hum – wilgotność z SCD41 (%)
+# SHT40_temp – temperatura z SHT40 (°C)
+# SHT40_hum – wilgotność z SHT40 (%)
+# PM1.0 – stężenie pyłu PM1.0 (µg/m³)
+# PM2.5 – PM2.5 (µg/m³)
+# PM10 – PM10 (µg/m³)
