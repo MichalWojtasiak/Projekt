@@ -7,8 +7,33 @@ import bme680
 from smbus2 import SMBus, i2c_msg
 from pms5003 import PMS5003
 
+# --- SHT40 ---
+SHT40_ADDR = 0x44
+MEASURE_HIGH_PRECISION = 0xFD
+
+def read_sht40(bus):
+    # Wyślij komendę pomiaru
+    write = i2c_msg.write(SHT40_ADDR, [MEASURE_HIGH_PRECISION])
+    bus.i2c_rdwr(write)
+
+    time.sleep(0.02)  # czas konwersji
+
+    # Odczytaj 6 bajtów (T, crc, RH, crc)
+    read = i2c_msg.read(SHT40_ADDR, 6)
+    bus.i2c_rdwr(read)
+
+    data = list(read)
+
+    temp_raw = data[0] << 8 | data[1]
+    hum_raw  = data[3] << 8 | data[4]
+
+    temperature = -45 + 175 * (temp_raw / 65535.0)
+    humidity = -6 + 125 * (hum_raw / 65535.0)
+
+    return temperature, humidity
+
 # --- KONFIGURACJA SCD41 ---
-SCD41_ADDR = 0x62  # Domyślny adres I2C SCD41
+SCD41_ADDR = 0x62
 
 def write_command(bus, cmd, delay=0):
     msg = i2c_msg.write(SCD41_ADDR, cmd)
@@ -39,20 +64,23 @@ sensor.set_gas_heater_temperature(320)
 sensor.set_gas_heater_duration(150)
 sensor.select_gas_heater_profile(0)
 
-# --- INICJALIZACJA SCD41 ---
+# --- INICJALIZACJA I2C ---
 bus = SMBus(1)
+
+# --- INICJALIZACJA SCD41 ---
 write_command(bus, [0x3F, 0x86], 0.5)  # stop_periodic_measurement
 write_command(bus, [0x21, 0xB1], 0.5)  # start_periodic_measurement
-time.sleep(5)  # pierwsze dane
+time.sleep(5)
 
 # --- INICJALIZACJA PMS5003 ---
 pms5003 = PMS5003(device='/dev/ttyS0')
 print("Uruchamianie PMS5003, proszę czekać 30s...")
-time.sleep(30)  # czas "rozgrzewania się"
+time.sleep(30)
 
-# --- CSV ---
+# --- CSV INIT ---
 csv_filename = "sensor_data.csv"
 file_exists = os.path.isfile(csv_filename)
+
 with open(csv_filename, "a", newline="") as f:
     writer = csv.writer(f)
     if not file_exists:
@@ -60,22 +88,22 @@ with open(csv_filename, "a", newline="") as f:
             "timestamp",
             "BME_temp", "BME_pres", "BME_hum", "BME_gas", "BME_iaq",
             "SCD41_CO2", "SCD41_temp", "SCD41_hum",
+            "SHT40_temp", "SHT40_hum",
             "PM1.0", "PM2.5", "PM10"
         ])
 
 # --- GŁÓWNA PĘTLA ---
 try:
     while True:
-        # --- ODCZYT BME680 ---
+        # --- BME680 ---
         if sensor.get_sensor_data() and sensor.data.heat_stable:
             bme_temp = sensor.data.temperature
             bme_pres = sensor.data.pressure
             bme_hum = sensor.data.humidity
             bme_gas = sensor.data.gas_resistance
 
-            # IAQ (upraszczony)
             hum_baseline = 40.0
-            gas_baseline = 100000  # przykładowa wartość
+            gas_baseline = 100000
             hum_weighting = 0.25
 
             gas_offset = gas_baseline - bme_gas
@@ -95,7 +123,7 @@ try:
         else:
             bme_temp = bme_pres = bme_hum = bme_gas = bme_iaq = None
 
-        # --- ODCZYT SCD41 ---
+        # --- SCD41 ---
         try:
             write_command(bus, [0xEC, 0x05])
             data = read_data(bus)
@@ -107,7 +135,13 @@ try:
         except Exception:
             scd_co2 = scd_temp = scd_hum = None
 
-        # --- ODCZYT PMS5003 ---
+        # --- SHT40 ---
+        try:
+            sht_temp, sht_hum = read_sht40(bus)
+        except Exception:
+            sht_temp = sht_hum = None
+
+        # --- PMS5003 ---
         try:
             readings = pms5003.read()
             pm1 = readings.pm_ug_per_m3(1.0)
@@ -118,7 +152,7 @@ try:
             pms5003.reset()
             pm1 = pm2_5 = pm10 = None
 
-        # --- WYŚWIETLANIE LIVE ---
+        # --- EKRAN ---
         os.system("clear")
         print("=== LIVE DATA ===\n")
 
@@ -132,18 +166,21 @@ try:
         print(f"          Temp: {scd_temp:.2f} °C" if scd_temp is not None else "          Temp: N/A")
         print(f"          Hum: {scd_hum:.2f} %" if scd_hum is not None else "          Hum: N/A")
 
+        print(f"SHT40 -> Temp: {sht_temp:.2f} °C" if sht_temp is not None else "SHT40 -> Temp: N/A")
+        print(f"          Hum: {sht_hum:.2f} %" if sht_hum is not None else "          Hum: N/A")
+
         print(f"PMS5003 -> PM1.0: {pm1}" if pm1 is not None else "PMS5003 -> PM1.0: N/A")
         print(f"            PM2.5: {pm2_5}" if pm2_5 is not None else "            PM2.5: N/A")
         print(f"            PM10: {pm10}" if pm10 is not None else "            PM10: N/A\n")
 
-
-        # --- ZAPIS DO CSV ---
+        # --- CSV ---
         with open(csv_filename, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
                 datetime.now().isoformat(),
                 bme_temp, bme_pres, bme_hum, bme_gas, bme_iaq,
                 scd_co2, scd_temp, scd_hum,
+                sht_temp, sht_hum,
                 pm1, pm2_5, pm10
             ])
 
