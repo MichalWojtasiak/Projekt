@@ -184,7 +184,7 @@ try:
                 pm1, pm2_5, pm10
             ])
 
-        time.sleep(300)
+        time.sleep(5)
 
 except KeyboardInterrupt:
     print("\nZakończono pomiary.")
