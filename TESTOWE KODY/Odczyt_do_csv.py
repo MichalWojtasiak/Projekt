@@ -91,7 +91,7 @@ with open(csv_filename, "a", newline="") as f:
             "SHT40_temp", "SHT40_hum",
             "PM1.0", "PM2.5", "PM10"
         ])
-
+last_csv_write = 0
 # --- GŁÓWNA PĘTLA ---
 try:
     while True:
