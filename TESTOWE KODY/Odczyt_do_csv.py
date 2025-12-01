@@ -173,17 +173,19 @@ try:
         print(f"            PM2.5: {pm2_5}" if pm2_5 is not None else "            PM2.5: N/A")
         print(f"            PM10: {pm10}" if pm10 is not None else "            PM10: N/A\n")
 
-        # --- CSV ---
-        with open(csv_filename, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                datetime.now().isoformat(),
-                bme_temp, bme_pres, bme_hum, bme_gas, bme_iaq,
-                scd_co2, scd_temp, scd_hum,
-                sht_temp, sht_hum,
-                pm1, pm2_5, pm10
-            ])
-
+        # --- ZAPIS CO 5 MIN DO CSV ---
+        now = time.time()
+        if now - last_csv_write >= 300:  # 300 sekund = 5 minut
+            last_csv_write = now
+            with open(csv_filename, "a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    bme_temp, bme_pres, bme_hum, bme_gas, bme_iaq,
+                    scd_co2, scd_temp, scd_hum,
+                    sht_temp, sht_hum,
+                    pm1, pm2_5, pm10
+                ])
         time.sleep(5)
 
 except KeyboardInterrupt:
