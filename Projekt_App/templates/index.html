@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Projekt</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #050a0f;
+            --card-bg: rgba(16, 28, 42, 0.8);
+            --neon-blue: #00d1ff;
+            --neon-green: #00ff88;
+            --neon-orange: #ff9900;
+            --neon-red: #ff3e3e;
+            --text-color: #e0f2f7;
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            background: var(--bg-color); color: var(--text-color);
+            font-family: 'Segoe UI', sans-serif; overflow: hidden;
+        }
+
+        /* UKŁAD SIATKI - 3 RÓWNE RZĘDY */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 2fr 1.2fr; 
+            grid-template-rows: repeat(3, 1fr);
+            gap: 15px; padding: 15px; height: 100vh; box-sizing: border-box;
+            grid-template-areas: 
+                "time pm10"
+                "co2  pm25"
+                "bottom pm100";
+        }
+
+        .card {
+            background: var(--card-bg); border: 2px solid var(--neon-blue);
+            border-radius: 15px; position: relative;
+            display: flex; flex-direction: column; 
+            justify-content: center; align-items: center; text-align: center;
+            box-shadow: inset 0 0 15px rgba(0, 209, 255, 0.1);
+        }
+
+        /* CZAS I DATA (Bez kropki) */
+        .time-card { grid-area: time; flex-direction: column !important; }
+        .time-display { font-size: 5.5rem; font-weight: 800; margin: 0; line-height: 1; letter-spacing: -2px; }
+        .date-container { display: flex; align-items: center; gap: 15px; margin-top: 5px; }
+        .day-name { color: var(--neon-green); font-size: 1.8rem; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; }
+        .date-divider { width: 2px; height: 25px; background: var(--neon-blue); }
+        .date-numeric { font-size: 1.8rem; color: var(--text-color); font-weight: 300; }
+
+        /* CO2 */
+        .co2-card { grid-area: co2; }
+        .co2-card .value { font-size: 5rem; } 
+        
+        /* PM */
+        .pm10-c { grid-area: pm10; }
+        .pm25-c { grid-area: pm25; }
+        .pm100-c { grid-area: pm100; }
+        
+        /* DOLNA GRUPA */
+        .bottom-group { grid-area: bottom; display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+
+        /* KROPKA STATUSU */
+        .status-dot {
+            position: absolute; top: 12px; right: 12px;
+            width: 14px; height: 14px; border-radius: 50%;
+            background: var(--neon-green); box-shadow: 0 0 10px var(--neon-green);
+        }
+
+        .label { font-size: 0.9rem; color: var(--neon-blue); text-transform: uppercase; font-weight: bold; margin-bottom: 5px; letter-spacing: 2px; }
+        .value { font-size: 3.2rem; font-weight: 800; }
+        .unit { font-size: 1.1rem; color: #888; margin-left: 5px; }
+
+        /* PASEK CO2 Z KROPKĄ */
+        .progress-container { width: 85%; height: 16px; background: #0a1a2a; border-radius: 8px; margin: 10px 0; border: 2px solid var(--neon-blue); overflow: visible; }
+        .progress-bar { 
+            height: 100%; width: 0%; border-radius: 8px; position: relative;
+            --current-bar-color: var(--neon-green);
+            background: var(--current-bar-color); box-shadow: 0 0 15px var(--current-bar-color);
+            transition: width 0.8s, background-color 0.8s;
+        }
+        .progress-bar::after {
+            content: ''; position: absolute; right: -10px; top: 50%; transform: translateY(-50%);
+            width: 20px; height: 20px; border-radius: 50%; background: var(--current-bar-color);
+            box-shadow: 0 0 20px var(--current-bar-color); border: 3px solid var(--bg-color);
+        }
+
+        .history-mini { font-size: 0.85rem; display: flex; gap: 12px; color: #aaa; }
+        .delta-up { color: var(--neon-red); }
+        .delta-down { color: var(--neon-green); }
+
+        /* --- POPRAWIONY OVERLAY I PRZYCISK ZAMYKANIA --- */
+        #overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.98); display: none; z-index: 1000; 
+            padding: 60px 30px 40px 30px; /* Większy padding góra i dół */
+            box-sizing: border-box; 
+        }
+        .close-btn { 
+            position: absolute; top: 20px; right: 30px; 
+            font-size: 5rem; color: white; 
+            cursor: pointer; z-index: 1100; font-weight: bold;
+            line-height: 1;
+        }
+        .chart-container { width: 100%; height: 100%; position: relative; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="card time-card">
+        <div class="time-display" id="clock">00:00</div>
+        <div class="date-container">
+            <div class="day-name" id="day-name">--</div>
+            <div class="date-divider"></div>
+            <div class="date-numeric" id="date">--.--.----</div>
+        </div>
+    </div>
+    
+    <div class="card pm10-c" onclick="openChart('pm10')">
+        <div class="status-dot" id="dot-pm10"></div>
+        <span class="label">PM 1.0</span>
+        <div><span class="value" id="v-pm10">--</span><span class="unit">µg</span></div>
+    </div>
+
+    <div class="card co2-card" onclick="openChart('co2')">
+        <div class="status-dot" id="dot-co2"></div>
+        <span class="label">CO2 Level</span>
+        <div><span class="value" id="v-co2">--</span><span class="unit">PPM</span></div>
+        <div class="progress-container"><div class="progress-bar" id="bar-co2"></div></div>
+        <div class="history-mini">
+            <span>3h: <b id="h-3h">--</b></span>
+            <span>12h: <b id="h-12h">--</b></span>
+            <span>24h: <b id="h-24h">--</b></span>
+        </div>
+    </div>
+
+    <div class="card pm25-c" onclick="openChart('pm25')">
+        <div class="status-dot" id="dot-pm25"></div>
+        <span class="label">PM 2.5</span>
+        <div><span class="value" id="v-pm25">--</span><span class="unit">µg</span></div>
+    </div>
+
+    <div class="bottom-group">
+        <div class="card" onclick="openChart('temp')">
+            <span class="label">Temp</span>
+            <div class="value" style="font-size: 2rem;"><span id="v-temp">--</span>°C</div>
+        </div>
+        <div class="card" onclick="openChart('hum')">
+            <span class="label">Hum</span>
+            <div class="value" style="font-size: 2rem;"><span id="v-hum">--</span>%</div>
+        </div>
+        <div class="card" onclick="openChart('voc')">
+            <div class="status-dot" id="dot-voc"></div>
+            <span class="label">VOC</span>
+            <div class="value" style="font-size: 2rem;" id="v-voc">--</div>
+        </div>
+        <div class="card" onclick="openChart('iaq')">
+            <div class="status-dot" id="dot-iaq"></div>
+            <span class="label">IAQ</span>
+            <div class="value" style="font-size: 2rem;" id="v-iaq">--</div>
+        </div>
+    </div>
+
+    <div class="card pm100-c" onclick="openChart('pm100')">
+        <div class="status-dot" id="dot-pm100"></div>
+        <span class="label">PM 10</span>
+        <div><span class="value" id="v-pm100">--</span><span class="unit">µg</span></div>
+    </div>
+</div>
+
+<div id="overlay">
+    <span class="close-btn" onclick="closeChart()">&times;</span>
+    <div class="chart-container">
+        <canvas id="chartCanvas"></canvas>
+    </div>
+</div>
+
+<script>
+    let chart, currentSensor = null;
+
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('clock').innerText = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        document.getElementById('date').innerText = now.toLocaleDateString('pl-PL');
+        document.getElementById('day-name').innerText = now.toLocaleDateString('pl-PL', {weekday: 'long'}).toUpperCase();
+    }
+
+    function setDotColor(id, value, low, high) {
+        const dot = document.getElementById(id);
+        if(!dot) return;
+        let color = "var(--neon-green)";
+        if (value > high) color = "var(--neon-red)";
+        else if (value > low) color = "var(--neon-orange)";
+        dot.style.background = color;
+        dot.style.boxShadow = `0 0 10px ${color}`;
+        return color;
+    }
+
+    function calcDelta(current, past, elementId) {
+        const el = document.getElementById(elementId);
+        if (!past) { el.innerText = "--"; return; }
+        const diff = Math.round(current - past);
+        el.innerText = `${past} (${diff > 0 ? "+" : ""}${diff})`;
+        el.className = diff > 0 ? "delta-up" : "delta-down";
+    }
+
+    async function refresh() {
+        try {
+            const r = await fetch('/api/live');
+            const d = await r.json();
+            const co2 = d.co2 || 0;
+            const pm10 = d.pm10 || 0;
+            const pm25 = d.pm25 || 0;
+            const pm100 = d.pm100 || 0;
+
+            document.getElementById('v-co2').innerText = co2;
+            document.getElementById('v-temp').innerText = d.temp ? d.temp.toFixed(1) : "--";
+            document.getElementById('v-hum').innerText = d.hum ? d.hum.toFixed(1) : "--";
+            document.getElementById('v-pm10').innerText = pm10;
+            document.getElementById('v-pm25').innerText = pm25;
+            document.getElementById('v-pm100').innerText = pm100;
+            document.getElementById('v-voc').innerText = d.voc || "Wait";
+            document.getElementById('v-iaq').innerText = d.iaq || "Wait";
+
+            const co2Color = setDotColor('dot-co2', co2, 800, 1200);
+            setDotColor('dot-pm10', pm10, 10, 20);
+            setDotColor('dot-pm25', pm25, 12, 25);
+            setDotColor('dot-pm100', pm100, 20, 50);
+            setDotColor('dot-voc', d.voc, 250, 500);
+            setDotColor('dot-iaq', d.iaq, 50, 100);
+
+            const perc = Math.min(Math.max((co2 - 400) / 16, 0), 100);
+            const bar = document.getElementById('bar-co2');
+            bar.style.width = perc + "%";
+            bar.style.setProperty('--current-bar-color', co2Color);
+
+            calcDelta(co2, d.co2_3h, 'h-3h');
+            calcDelta(co2, d.co2_12h, 'h-12h');
+            calcDelta(co2, d.co2_24h, 'h-24h');
+
+            if(currentSensor) updateChartOnly(currentSensor);
+        } catch(e) {}
+    }
+
+    async function openChart(s) { currentSensor = s; document.getElementById('overlay').style.display='block'; updateChartOnly(s); }
+    function closeChart() { currentSensor = null; document.getElementById('overlay').style.display='none'; }
+    
+    async function updateChartOnly(s) {
+        const r = await fetch(`/api/history/${s}`);
+        const data = await r.json();
+        const ctx = document.getElementById('chartCanvas').getContext('2d');
+        if(chart) chart.destroy();
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.map(i => i.timestamp.split(' ')[1]),
+                datasets: [{ 
+                    data: data.map(i => i[s]), 
+                    borderColor: '#00d1ff', 
+                    backgroundColor: 'rgba(0, 209, 255, 0.1)',
+                    fill: true, tension: 0.3, pointRadius: 0 
+                }]
+            },
+            options: { 
+                responsive: true, maintainAspectRatio: false, animation: false,
+                scales: { 
+                    // PRZYWRÓCONA PODZIAŁKA GODZINOWA
+                    x: { 
+                        display: true, 
+                        ticks: { color: '#888', font: { size: 14 } },
+                        grid: { display: false }
+                    },
+                    y: { 
+                        display: true, 
+                        ticks: { color: '#888' },
+                        grid: { color: '#222' }
+                    }
+                },
+                plugins: { legend: { display: false } } 
+            }
+        });
+    }
+
+    setInterval(refresh, 5000);
+    setInterval(updateClock, 1000);
+    refresh(); updateClock();
+</script>
+</body>
+</html>
