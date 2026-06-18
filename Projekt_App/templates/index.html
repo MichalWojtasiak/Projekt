@@ -39,10 +39,18 @@
             display: flex; flex-direction: column; 
             justify-content: center; align-items: center; text-align: center;
             box-shadow: inset 0 0 15px rgba(0, 209, 255, 0.1);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .card:hover {
+            transform: scale(1.02);
+            box-shadow: inset 0 0 25px rgba(0, 209, 255, 0.2);
         }
 
-        /* CZAS I DATA (Bez kropki) */
-        .time-card { grid-area: time; flex-direction: column !important; }
+        /* CZAS I DATA */
+        .time-card { grid-area: time; flex-direction: column !important; cursor: default; }
+        .time-card:hover { transform: none; box-shadow: inset 0 0 15px rgba(0, 209, 255, 0.1); }
         .time-display { font-size: 5.5rem; font-weight: 800; margin: 0; line-height: 1; letter-spacing: -2px; }
         .date-container { display: flex; align-items: center; gap: 15px; margin-top: 5px; }
         .day-name { color: var(--neon-green); font-size: 1.8rem; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; }
@@ -59,7 +67,7 @@
         .pm100-c { grid-area: pm100; }
         
         /* DOLNA GRUPA */
-        .bottom-group { grid-area: bottom; display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .bottom-group { grid-area: bottom; display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; }
 
         /* KROPKA STATUSU */
         .status-dot {
@@ -90,20 +98,39 @@
         .delta-up { color: var(--neon-red); }
         .delta-down { color: var(--neon-green); }
 
-        /* --- POPRAWIONY OVERLAY I PRZYCISK ZAMYKANIA --- */
+        /* --- OVERLAY I WYKRES --- */
         #overlay { 
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(0,0,0,0.98); display: none; z-index: 1000; 
-            padding: 60px 30px 40px 30px; /* Większy padding góra i dół */
+            background: rgba(0,0,0,0.98); z-index: 1000; 
+            padding: 60px 30px 40px 30px; 
             box-sizing: border-box; 
+            display: none; 
+            flex-direction: column; 
         }
         .close-btn { 
             position: absolute; top: 20px; right: 30px; 
             font-size: 5rem; color: white; 
             cursor: pointer; z-index: 1100; font-weight: bold;
             line-height: 1;
+            transition: color 0.2s;
         }
-        .chart-container { width: 100%; height: 100%; position: relative; }
+        .close-btn:hover { color: var(--neon-red); }
+        
+        .chart-header {
+            color: var(--neon-blue);
+            font-size: 2.5rem;
+            text-align: center;
+            margin: 0 0 20px 0;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 800;
+        }
+
+        .chart-container { 
+            width: 100%; 
+            flex-grow: 1; 
+            position: relative; 
+        }
     </style>
 </head>
 <body>
@@ -145,21 +172,26 @@
     <div class="bottom-group">
         <div class="card" onclick="openChart('temp')">
             <span class="label">Temp</span>
-            <div class="value" style="font-size: 2rem;"><span id="v-temp">--</span>°C</div>
+            <div class="value" style="font-size: 2.2rem;"><span id="v-temp">--</span><span class="unit">°C</span></div>
         </div>
         <div class="card" onclick="openChart('hum')">
             <span class="label">Hum</span>
-            <div class="value" style="font-size: 2rem;"><span id="v-hum">--</span>%</div>
+            <div class="value" style="font-size: 2.2rem;"><span id="v-hum">--</span><span class="unit">%</span></div>
         </div>
         <div class="card" onclick="openChart('voc')">
             <div class="status-dot" id="dot-voc"></div>
             <span class="label">VOC</span>
-            <div class="value" style="font-size: 2rem;" id="v-voc">--</div>
+            <div class="value" style="font-size: 2.2rem;"><span id="v-voc">--</span><span class="unit">Idx</span></div>
         </div>
         <div class="card" onclick="openChart('iaq')">
             <div class="status-dot" id="dot-iaq"></div>
             <span class="label">IAQ</span>
-            <div class="value" style="font-size: 2rem;" id="v-iaq">--</div>
+            <div class="value" style="font-size: 2.2rem;"><span id="v-iaq">--</span><span class="unit">Idx</span></div>
+        </div>
+        <div class="card" onclick="openPredictionChart()">
+            <span class="label">CO2 za 15min</span>
+            <div class="value" style="font-size: 2.2rem; color: var(--neon-red);"><span id="v-pred">--</span></div>
+            <span class="unit" style="margin:0;">PPM Predykcja</span>
         </div>
     </div>
 
@@ -172,6 +204,7 @@
 
 <div id="overlay">
     <span class="close-btn" onclick="closeChart()">&times;</span>
+    <h2 class="chart-header" id="chartTitle">Nazwa Wykresu</h2>
     <div class="chart-container">
         <canvas id="chartCanvas"></canvas>
     </div>
@@ -179,6 +212,18 @@
 
 <script>
     let chart, currentSensor = null;
+
+    // --- SŁOWNIK NAGŁÓWKÓW DLA WYKRESÓW ---
+    const sensorTitles = {
+        'pm10': 'Pył zawieszony PM 1.0',
+        'pm25': 'Pył zawieszony PM 2.5',
+        'pm100': 'Pył zawieszony PM 10',
+        'co2': 'Poziom CO2',
+        'temp': 'Temperatura °C',
+        'hum': 'Wilgotność %',
+        'voc': 'Lotne Związki Organiczne VOC',
+        'iaq': 'Indeks Jakości Powietrza IAQ'
+    };
 
     function updateClock() {
         const now = new Date();
@@ -221,15 +266,21 @@
             document.getElementById('v-pm10').innerText = pm10;
             document.getElementById('v-pm25').innerText = pm25;
             document.getElementById('v-pm100').innerText = pm100;
-            document.getElementById('v-voc').innerText = d.voc || "Wait";
-            document.getElementById('v-iaq').innerText = d.iaq || "Wait";
+            
+            // VOC i IAQ
+            document.getElementById('v-voc').innerText = d.voc !== undefined ? d.voc : "--";
+            document.getElementById('v-iaq').innerText = d.iaq !== undefined ? d.iaq : "--";
+            
+            document.getElementById('v-pred').innerText = d.pred_co2 ? Math.round(d.pred_co2) : "--";
 
-            const co2Color = setDotColor('dot-co2', co2, 800, 1200);
+            const co2Color = setDotColor('dot-co2', co2, 1000, 1500);
             setDotColor('dot-pm10', pm10, 10, 20);
             setDotColor('dot-pm25', pm25, 12, 25);
             setDotColor('dot-pm100', pm100, 20, 50);
-            setDotColor('dot-voc', d.voc, 250, 500);
-            setDotColor('dot-iaq', d.iaq, 50, 100);
+            
+            // limity dla kropek statusowych VOC i IAQ
+            setDotColor('dot-voc', d.voc, 250, 500); 
+            setDotColor('dot-iaq', d.iaq, 100, 200); 
 
             const perc = Math.min(Math.max((co2 - 400) / 16, 0), 100);
             const bar = document.getElementById('bar-co2');
@@ -244,14 +295,25 @@
         } catch(e) {}
     }
 
-    async function openChart(s) { currentSensor = s; document.getElementById('overlay').style.display='block'; updateChartOnly(s); }
-    function closeChart() { currentSensor = null; document.getElementById('overlay').style.display='none'; }
+    async function openChart(s) { 
+        currentSensor = s; 
+        document.getElementById('overlay').style.display = 'flex'; 
+        document.getElementById('chartTitle').innerText = sensorTitles[s] || s.toUpperCase();
+        updateChartOnly(s); 
+    }
     
+    function closeChart() { 
+        currentSensor = null; 
+        document.getElementById('overlay').style.display = 'none'; 
+    }
+    
+    // GŁÓWNA FUNKCJA GENERUJĄCA WYKRES
     async function updateChartOnly(s) {
         const r = await fetch(`/api/history/${s}`);
         const data = await r.json();
         const ctx = document.getElementById('chartCanvas').getContext('2d');
         if(chart) chart.destroy();
+        
         chart = new Chart(ctx, {
             type: 'line',
             data: {
@@ -266,10 +328,15 @@
             options: { 
                 responsive: true, maintainAspectRatio: false, animation: false,
                 scales: { 
-                    // PRZYWRÓCONA PODZIAŁKA GODZINOWA
                     x: { 
                         display: true, 
-                        ticks: { color: '#888', font: { size: 14 } },
+                        ticks: { 
+                            color: '#888', 
+                            font: { size: 14 },
+                            maxTicksLimit: 24,
+                            maxRotation: 45,
+                            minRotation: 45
+                        },
                         grid: { display: false }
                     },
                     y: { 
@@ -282,6 +349,72 @@
             }
         });
     }
+    async function openPredictionChart() {
+            currentSensor = null; 
+            document.getElementById('overlay').style.display = 'flex';
+            document.getElementById('chartTitle').innerText = "Przewidywane C02 15 min";
+            
+            const r = await fetch('/api/prediction');
+            const data = await r.json();
+            const ctx = document.getElementById('chartCanvas').getContext('2d');
+            if(chart) chart.destroy();
+            
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map(i => i.t.includes(' ') ? i.t.split(' ')[1] : i.t),
+                    datasets: [
+                        { 
+                            label: 'Aktualne', 
+                            data: data.map(i => i.actual), 
+                            borderColor: '#00d1ff', 
+                            backgroundColor: 'rgba(0, 209, 255, 0.1)', 
+                            fill: true, 
+                            tension: 0.3, 
+                            pointRadius: 0 
+                        },
+                        { 
+                            label: 'Prognoza 15 min', 
+                            data: data.map(i => i.pred), 
+                            borderColor: '#ff3e3e', 
+                            backgroundColor: 'rgba(255, 62, 62, 0.05)',
+                            fill: true, 
+                            tension: 0.3, 
+                            pointRadius: 0 
+                        }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: { 
+                        x: { 
+                            display: true, 
+                            ticks: { 
+                                color: '#888', 
+                                font: { size: 14 },
+                                maxTicksLimit: 24,
+                                maxRotation: 45,
+                                minRotation: 45
+                            },
+                            grid: { display: false } 
+                        },
+                        y: { 
+                            display: true,
+                            ticks: { color: '#888' }, 
+                            grid: { color: '#222' } 
+                        }
+                    },
+                    plugins: {
+                        legend: { 
+                            display: true,
+                            labels: { color: '#e0f2f7', font: { size: 14 } } 
+                        }
+                    }
+                }
+            });
+        }
 
     setInterval(refresh, 5000);
     setInterval(updateClock, 1000);
