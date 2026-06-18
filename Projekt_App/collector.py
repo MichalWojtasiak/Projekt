@@ -1,23 +1,32 @@
 import sqlite3
 import time
 import threading
+import board
+import adafruit_sgp40
+import adafruit_sht4x
+import adafruit_scd4x
+import joblib
+import pandas as pd
+from datetime import datetime
 from pms5003 import PMS5003
-from smbus2 import SMBus, i2c_msg
 
-# --- KONFIGURACJA ---
-SCD41_ADDR, SHT40_ADDR = 0x62, 0x44
-MEASURE_HIGH_PRECISION = 0xFD
-bus = SMBus(1)
+# Konfiguracja
+i2c = board.I2C()
 
-# Inicjalizacja PMS5003
+# Czujniki I2C
+sgp = adafruit_sgp40.SGP40(i2c)
+sht = adafruit_sht4x.SHT4x(i2c)
+scd4x = adafruit_scd4x.SCD4X(i2c)
+
+# Czujnik PMS5003
 pms5003 = PMS5003(device='/dev/ttyS0')
 
-# Globalne zmienne na dane z PMS
+# Zmienne dla danych PMS
 pms_latest_data = {"pm1": 0, "pm25": 0, "pm10": 0}
 data_lock = threading.Lock()
 
 def pms_worker():
-    """Wątek, który non-stop czyta dane z PMS5003, aby bufor był zawsze świeży"""
+    """Wątek czytający dane z PMS5003 w tle"""
     global pms_latest_data
     while True:
         try:
@@ -26,83 +35,97 @@ def pms_worker():
                 pms_latest_data["pm1"] = data.pm_ug_per_m3(1.0)
                 pms_latest_data["pm25"] = data.pm_ug_per_m3(2.5)
                 pms_latest_data["pm10"] = data.pm_ug_per_m3(10)
-        except Exception as e:
-            # W razie błędu odczytu (np. suma kontrolna) czekamy chwilę
+        except Exception:
             time.sleep(1)
 
+def calculate_iaq(co2, pm25, voc_index):
+    """Oblicza IAQ w skali 1-100 (100 = idealne)"""
+    safe_voc = voc_index if voc_index > 0 else 100
+    
+    score_co2 = max(0, 100 - (max(0, co2 - 400) / 16)) 
+    score_pm25 = max(0, 100 - (pm25 * 2)) 
+    score_voc = max(0, 100 - (max(0, safe_voc - 150) / 3.5))
+
+    total_iaq = (score_co2 * 0.3) + (score_pm25 * 0.4) + (score_voc * 0.3)
+    return round(total_iaq)
+
 def init_db():
+    """Inicjalizacja bazy danych z kolumną dla predykcji"""
     conn = sqlite3.connect('sensors.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS readings
-                 (timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                 (timestamp DATETIME,
                   temp REAL, hum REAL, co2 INTEGER, 
                   pm10 REAL, pm25 REAL, pm100 REAL, 
-                  voc REAL, iaq REAL)''')
+                  voc REAL, iaq REAL, pred_co2 REAL)''')
     conn.commit()
     conn.close()
-
-def scd41_cmd(cmd, delay=0):
-    bus.i2c_rdwr(i2c_msg.write(SCD41_ADDR, cmd))
-    if delay: time.sleep(delay)
-
-def read_sht40():
-    try:
-        bus.i2c_rdwr(i2c_msg.write(SHT40_ADDR, [MEASURE_HIGH_PRECISION]))
-        time.sleep(0.02)
-        read = i2c_msg.read(SHT40_ADDR, 6)
-        bus.i2c_rdwr(read)
-        d = list(read)
-        t = -45 + 175 * ((d[0] << 8 | d[1]) / 65535.0)
-        h = -6 + 125 * ((d[3] << 8 | d[4]) / 65535.0)
-        return t, h
-    except:
-        return None, None
 
 def collect_data():
     init_db()
     
-    # Uruchomienie wątku dla PMS5003
+    # Wątek PMS
     t_pms = threading.Thread(target=pms_worker, daemon=True)
     t_pms.start()
 
-    # Inicjalizacja SCD41
-    scd41_cmd([0x3F, 0x86], 0.5) # Stop
-    scd41_cmd([0x21, 0xB1], 0.5) # Start
+    # Pomiar SCD41
+    scd4x.start_periodic_measurement()
     
-    print("Zbieracz aktywny. Pierwsze dane za 10s...")
-    
+    print("Stacja aktywna (Board I2C + AI Engine)")
     conn = sqlite3.connect('sensors.db', check_same_thread=False)
     
     while True:
-        time.sleep(10) # Czekamy na zebranie danych
-        try:
-            # Pobierz najświeższe dane z wątku PMS
-            with data_lock:
-                pm1 = pms_latest_data["pm1"]
-                pm25 = pms_latest_data["pm25"]
-                pm10 = pms_latest_data["pm10"]
+        if scd4x.data_ready:
+            try:
+                # 1. Odczyt SHT40 i SGP40
+                temp, hum = sht.measurements
+                voc_index = sgp.measure_index(temperature=temp, relative_humidity=hum)
 
-            # Odczyt SCD41 (CO2)
-            scd41_cmd([0xEC, 0x05])
-            r = i2c_msg.read(SCD41_ADDR, 9)
-            bus.i2c_rdwr(r)
-            co2 = list(r)[0] << 8 | list(r)[1]
+                # 2. Odczyt SCD41
+                co2 = scd4x.CO2
+                
+                # 3. Odczyt PMS
+                with data_lock:
+                    pm1, pm25, pm10 = pms_latest_data["pm1"], pms_latest_data["pm25"], pms_latest_data["pm10"]
 
-            # Odczyt SHT40
-            t, h = read_sht40()
+                # 4. Obliczanie IAQ
+                iaq_val = calculate_iaq(co2, pm25, voc_index)
 
-            # Zapis do bazy
-            with conn:
-                conn.execute('''INSERT INTO readings 
-                    (temp, hum, co2, pm10, pm25, pm100, voc, iaq) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                    (round(t,1) if t else None, round(h,0) if h else None, 
-                     co2, pm1, pm25, pm10, None, None))
-            
-            print(f"Zapisano: {co2}ppm | {t:.1f}C | PM2.5: {pm25} | PM1 {pm1} | PM10: {pm10}")
-            
-        except Exception as e:
-            print(f"Błąd pętli głównej: {e}")
+                # 5. PREDYKCJA
+                pred_co2 = None
+                try:
+                    # Wytrenowany model
+                    model = joblib.load('co2_model.pkl')
+                    
+                    # Obliczanie trendu
+                    last_row = conn.execute('SELECT co2 FROM readings ORDER BY timestamp DESC LIMIT 1').fetchone()
+                    trend = co2 - last_row[0] if last_row and last_row[0] else 0
+                    
+                    now = datetime.now()
+                    # Cechy: co2, temp, hum, godzina, dzień_tyg, trend
+                    X_input = pd.DataFrame(
+                        [[co2, temp, hum, now.hour, now.weekday(), trend]], 
+                        columns=['co2', 'temp', 'hum', 'hour', 'day_of_week', 'co2_trend']
+                    )
+                    pred_co2 = round(model.predict(X_input)[0], 1)
+                except Exception:
+                    pred_co2 = None
+
+                # 6. Zapisywanie CZASU LOKALNEGO i danych
+                now_local = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                with conn:
+                    conn.execute('''INSERT INTO readings 
+                        (timestamp, temp, hum, co2, pm10, pm25, pm100, voc, iaq, pred_co2) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (now_local, round(temp, 1), round(hum, 1), co2, 
+                         pm1, pm25, pm10, voc_index, iaq_val, pred_co2))
+                
+                print(f"[{now_local}] CO2: {co2} | Pred(15m): {pred_co2 if pred_co2 else 'N/A'} | IAQ: {iaq_val}%")
+
+            except Exception as e:
+                print(f"Błąd pętli: {e}")
+        
+        time.sleep(10)
 
 if __name__ == "__main__":
     collect_data()
